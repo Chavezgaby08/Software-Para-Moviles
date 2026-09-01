@@ -34,7 +34,6 @@ self.addEventListener('fetch', (event) => {
 
   if (request.method !== 'GET') return;
 
-  // 1. HTML / Documentos de Navegación -> Network First
   if (request.mode === 'navigate' || request.headers.get('accept')?.includes('text/html')) {
     event.respondWith(
       fetch(request)
@@ -62,7 +61,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (request.destination === 'image' || url.pathname.match(/\.(png|jpg|jpeg|svg|gif)$/)) {
+  if (request.destination === 'image' || url.pathname.match(/\.(png|jpg|jpeg|svg|gif|ico)$/)) {
     event.respondWith(
       caches.match(request).then((cachedResponse) => {
         const fetchPromise = fetch(request).then((networkResponse) => {
