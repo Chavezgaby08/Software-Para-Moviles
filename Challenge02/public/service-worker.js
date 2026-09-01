@@ -3,7 +3,8 @@ const APP_SHELL = [
   '/',
   '/index.html',
   '/manifest.json',
-  '/favicon.ico'
+  '/favicon.ico',
+  '/icon-5121.png'
 ];
 
 self.addEventListener('install', (event) => {
