@@ -3,6 +3,7 @@ import type { Contact } from './Types/contact';
 import Loader from './Components/Loader';
 import ContactForm from './Components/ContactForm';
 import ContactList from './Components/ContactList';
+import contactIcon from './assets/contact-app-icon.png';
 import './App.css';
 
 const App: React.FC = () => {
@@ -47,7 +48,10 @@ const App: React.FC = () => {
 
   return (
     <main>
-      <h1>Gestión de Contactos</h1>
+      <div style={{textAlign: 'center'}}>
+        <img src={contactIcon} alt='Logo App' style={{ width: '60px', height: '60px' }} />
+        <h1>Gestión de Contactos</h1>
+      </div>
       {loading ? (
         <Loader />
       ) : (
