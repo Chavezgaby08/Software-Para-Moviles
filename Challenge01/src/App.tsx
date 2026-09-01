@@ -1,122 +1,72 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import React, { useState, useEffect } from 'react';
+import type { Contact } from './Types/contact';
+import Loader from './Components/Loader';
+import ContactForm from './Components/ContactForm';
+import ContactList from './Components/ContactList';
+import './App.css';
 
-function App() {
-  const [count, setCount] = useState(0)
+const App: React.FC = () => {
+  const [contactos, setContactos] = useState<Contact[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [editingContact, setEditingContact] = useState<Contact | null>(null);
+
+  // Simulación de carga inicial de datos (2 segundos)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setContactos([
+        { id: 1, nombre: 'Gabriela Chavez', telefono: '300 818 2441' },
+        { id: 2, nombre: 'Santiago Chavez', telefono: '317 772 5708' },
+      ]);
+      setLoading(false);
+    }, 2000);
+
+    return () => clearTimeout(timer); // Cleanup function
+  }, []);
+
+  // Guardar (Agregar o Editar)
+  const handleSaveContact = (contacto: Contact) => {
+    if (editingContact) {
+      setContactos((prev) =>
+        prev.map((c) => (c.id === contacto.id ? contacto : c))
+      );
+      setEditingContact(null);
+    } else {
+      setContactos((prev) => [...prev, contacto]);
+    }
+  };
+
+  // Eliminar
+  const handleDeleteContact = (id: number) => {
+    setContactos((prev) => prev.filter((c) => c.id !== id));
+  };
+
+  // Seleccionar para editar
+  const handleEditContact = (contacto: Contact) => {
+    setEditingContact(contacto);
+  };
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <main>
+      <h1>Gestión de Contactos</h1>
+      {loading ? (
+        <Loader />
+      ) : (
+        <>
+          <ContactForm
+            onSaveContact={handleSaveContact}
+            editingContact={editingContact}
+            onCancelEdit={() => setEditingContact(null)}
+          />
+          <h3>Lista de Contactos</h3>
+          <ContactList
+            contactos={contactos}
+            onDelete={handleDeleteContact}
+            onEdit={handleEditContact}
+          />
+        </>
+      )}
+    </main>
+  );
+};
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
-}
-
-export default App
+export default App;
