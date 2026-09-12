@@ -11,27 +11,24 @@ export const PatientList: React.FC<PatientListProps> = ({ patients }) => {
   }
 
   return (
-    <div style={styles.listContainer}>
-      <table style={styles.table}>
-        <thead>
-          <tr style={styles.thRow}>
-            <th style={styles.cell}>Nombre</th>
-            <th style={styles.cell}>Apellido</th>
-            <th style={styles.cell}>CC</th>
-            <th style={styles.cell}>Teléfono</th>
-          </tr>
-        </thead>
-        <tbody>
-          {patients.map((p) => (
-            <tr key={p.id} style={styles.trRow}>
-              <td style={styles.cell}>{p.nombre}</td>
-              <td style={styles.cell}>{p.apellido}</td>
-              <td style={styles.cell}>{p.cc}</td>
-              <td style={styles.cell}>{p.telefono}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="patient-list-container" style={styles.listContainer}>
+      <div className="patient-cards" aria-label="Pacientes registrados" style={{textAlign: 'center'}}>
+        {patients.map((p) => (
+          <article className="patient-card" key={p.id}>
+            <h4>{p.nombre} {p.apellido}</h4>
+            <dl>
+              <div>
+                <dt>CC</dt>
+                <dd>{p.cc}</dd>
+              </div>
+              <div>
+                <dt>Teléfono</dt>
+                <dd>{p.telefono}</dd>
+              </div>
+            </dl>
+          </article>
+        ))}
+      </div>
     </div>
   );
 };

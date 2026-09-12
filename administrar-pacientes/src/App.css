@@ -182,3 +182,63 @@
     border-right-color: var(--border);
   }
 }
+
+.patient-cards {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .patient-list-container {
+    box-shadow: none;
+    background: transparent;
+  }
+
+  .patient-table {
+    display: none;
+  }
+
+  .patient-cards {
+    display: grid;
+    gap: 12px;
+  }
+
+  .patient-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-left: 4px solid #0284c7;
+    border-radius: 8px;
+    padding: 14px 16px;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  }
+
+  .patient-card h4 {
+    color: #111827;
+    font-size: 17px;
+    margin: 0 0 10px;
+    text-align: center;
+  }
+
+  .patient-card dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin: 0;
+  }
+
+  .patient-card dt {
+    color: #6b7280;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 2px;
+    text-align: center;
+  }
+
+  .patient-card dd {
+    color: #1f2937;
+    font-size: 14px;
+    margin: 0;
+    overflow-wrap: anywhere;
+    text-align: center;
+  }
+}
