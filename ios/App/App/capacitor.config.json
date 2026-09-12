@@ -1,10 +1,9 @@
 {
-	"appId": "com.gabriela.contactos",
+	"appId": "com.gabriela.contactosNuevo",
 	"appName": "Contacto App",
 	"webDir": "dist",
 	"server": {
-		"androidScheme": "https",
-		"url": "http://192.168.1.77:8100"
+		"androidScheme": "https"
 	},
 	"packageClassList": [
 		"AppPlugin",
