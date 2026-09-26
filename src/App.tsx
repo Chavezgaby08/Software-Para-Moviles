@@ -1,46 +1,54 @@
-import { Navigate, Route } from 'react-router-dom';
-import { IonApp, IonRouterOutlet, setupIonicReact } from '@ionic/react';
+import React, { useContext } from 'react';
+import { Navigate, Route, Routes, Outlet } from 'react-router-dom';
+import { IonApp, IonRouterOutlet, setupIonicReact, IonSpinner } from '@ionic/react';
 import { IonReactRouter } from '@ionic/react-router';
-import Home from './pages/Home';
 
-/* Core CSS required for Ionic components to work properly */
+import { AuthContext } from './context/AuthContext';
+import { Login } from './pages/Login';
+import { Register } from './pages/Register';
+import { TaskList } from './pages/TaskList';
+import { TaskForm } from './pages/TaskForm';
+import { TaskDetail } from './pages/TaskDetail';
+
 import '@ionic/react/css/core.css';
-
-/* Basic CSS for apps built with Ionic */
 import '@ionic/react/css/normalize.css';
 import '@ionic/react/css/structure.css';
 import '@ionic/react/css/typography.css';
 
-/* Optional CSS utils that can be commented out */
-import '@ionic/react/css/padding.css';
-import '@ionic/react/css/float-elements.css';
-import '@ionic/react/css/text-alignment.css';
-import '@ionic/react/css/text-transformation.css';
-import '@ionic/react/css/flex-utils.css';
-import '@ionic/react/css/display.css';
-
-/**
- * Ionic Dark Mode
- * -----------------------------------------------------
- * For more info, please see:
- * https://ionicframework.com/docs/theming/dark-mode
- */
-
-/* import '@ionic/react/css/palettes/dark.always.css'; */
-/* import '@ionic/react/css/palettes/dark.class.css'; */
-import '@ionic/react/css/palettes/dark.system.css';
-
-/* Theme variables */
-import './theme/variables.css';
-
 setupIonicReact();
 
-const App: React.FC = () => (
+const ProtectedRoute: React.FC = () => {
+  const auth = useContext(AuthContext);
+
+  if (auth.loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <IonSpinner name="crescent" />
+      </div>
+    );
+  }
+
+  return auth.user ? <Outlet /> : <Navigate to="/login" replace />;
+};
+
+export const App: React.FC = () => (
   <IonApp>
     <IonReactRouter>
       <IonRouterOutlet>
-        <Route path="/home" element={<Home />} />
-        <Route path="/" element={<Navigate to="/home" replace />} />
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+
+
+          <Route element={<ProtectedRoute />}>
+            <Route path="/tasks" element={<TaskList />} />
+            <Route path="/tasks/new" element={<TaskForm />} />
+            <Route path="/tasks/edit/:id" element={<TaskForm />} />
+            <Route path="/tasks/:id" element={<TaskDetail />} />
+          </Route>
+
+          <Route path="/" element={<Navigate to="/login" replace />} />
+        </Routes>
       </IonRouterOutlet>
     </IonReactRouter>
   </IonApp>
