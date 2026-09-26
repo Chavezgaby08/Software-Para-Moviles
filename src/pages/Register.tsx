@@ -1,4 +1,4 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useEffect } from 'react';
 import { 
   IonPage, 
   IonHeader, 
@@ -9,7 +9,8 @@ import {
   IonLabel, 
   IonInput, 
   IonButton, 
-  IonToast 
+  IonToast,
+  IonSpinner 
 } from '@ionic/react';
 import { AuthContext } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -20,13 +21,31 @@ export const Register: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!auth.loading && auth.user) {
+      history('/tasks', { replace: true });
+    }
+  }, [auth.loading, auth.user, history]);
 
   const handleRegister = async () => {
+    if (!email || !password) {
+      setErrorMsg('Por favor completa todos los campos');
+      return;
+    }
+    setIsSubmitting(true);
     try {
       await auth.register(email, password);
       history('/tasks', { replace: true });
-    } catch (err: any) {
-      setErrorMsg(err.message);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setErrorMsg(err.message);
+      } else {
+        setErrorMsg('Error al registrar usuario');
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -45,6 +64,7 @@ export const Register: React.FC = () => {
             type="email" 
             value={email} 
             onIonInput={(e) => setEmail(e.detail.value!)} 
+            disabled={isSubmitting}
           />
         </IonItem>
 
@@ -54,14 +74,15 @@ export const Register: React.FC = () => {
             type="password" 
             value={password} 
             onIonInput={(e) => setPassword(e.detail.value!)} 
+            disabled={isSubmitting}
           />
         </IonItem>
 
-        <IonButton expand="block" color="success" className="ion-margin-top" onClick={handleRegister}>
-          Registrarse
+        <IonButton expand="block" color="success" className="ion-margin-top" onClick={handleRegister} disabled={isSubmitting}>
+          {isSubmitting ? <IonSpinner name="crescent" color="light" /> : 'Registrarse'}
         </IonButton>
 
-        <IonButton expand="block" fill="clear" onClick={() => history('/login')}>
+        <IonButton expand="block" fill="clear" onClick={() => history('/login')} disabled={isSubmitting}>
           ¿Ya tienes cuenta? Inicia Sesión
         </IonButton>
 

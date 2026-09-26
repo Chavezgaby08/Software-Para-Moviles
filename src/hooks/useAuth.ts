@@ -15,11 +15,35 @@ export function useAuth() {
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setLoading(false);
-    });
-    return () => unsubscribe();
+    let isMounted = true;
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      (currentUser) => {
+        if (isMounted) {
+          setUser(currentUser);
+          setLoading(false);
+        }
+      },
+      (error) => {
+        console.warn('Firebase Auth error:', error);
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    );
+
+    // Timeout safety net in case network is disconnected
+    const timer = setTimeout(() => {
+      if (isMounted) {
+        setLoading(false);
+      }
+    }, 2500);
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+      clearTimeout(timer);
+    };
   }, []);
 
   const login = (email: string, pass: string) => signInWithEmailAndPassword(auth, email, pass);
