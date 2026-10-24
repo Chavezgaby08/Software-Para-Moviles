@@ -46,6 +46,7 @@ const App: React.FC = () => (
 
         {/* Redirección raíz a /missions */}
         <Route path="/" element={<Navigate to="/missions" replace />} />
+        <Route path="*" element={<Navigate to="/missions" replace />} />
       </IonRouterOutlet>
     </IonReactRouter>
   </IonApp>
