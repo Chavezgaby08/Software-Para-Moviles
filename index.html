@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Ionic App</title>
+    <title>Panel de Misiones</title>
+    <meta name="description" content="Aplicación interactiva de retos y misiones móviles con autenticación, geolocalización, cámara y ranking de puntos." />
+    <meta property="og:title" content="Panel de Misiones" />
+    <meta property="og:description" content="Aplicación interactiva de retos y misiones móviles con autenticación, geolocalización, cámara y ranking de puntos." />
     
     <base href="/" />
     
@@ -22,6 +25,32 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Ionic App" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+
+    <!-- Polyfill/Stub para prevenir el fallo de gapi.iframes en Capacitor / iOS WebKit -->
+    <script>
+      (function() {
+        if (typeof window !== 'undefined') {
+          window.gapi = window.gapi || {};
+          if (!window.gapi.iframes) {
+            window.gapi.iframes = {
+              getContext: function() {
+                return {
+                  openChild: function() { return {}; },
+                  getParent: function() { return {}; }
+                };
+              }
+            };
+          }
+          if (!window.gapi.load) {
+            window.gapi.load = function(name, cb) {
+              if (typeof cb === 'function') {
+                try { cb(); } catch (e) { console.warn(e); }
+              }
+            };
+          }
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
