@@ -13,7 +13,6 @@ interface AuthContextProps {
   loading: boolean;
   logout: () => Promise<void>;
   updateUserPoints: (newPoints: number, completedMissions: MissionProgress[]) => Promise<void>;
-  guestLogin: () => void;
 }
 
 export const AuthContext = createContext<AuthContextProps>({} as AuthContextProps);
@@ -72,16 +71,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('mission_photo');
   };
 
-  const guestLogin = () => {
-    const guestUser = {
-      uid: 'invitado_' + Date.now().toString(36),
-      email: 'explorador@misiones.com',
-      displayName: 'Explorador Invitado'
-    } as unknown as User;
-    setUser(guestUser);
-    localStorage.setItem('user', JSON.stringify({ uid: guestUser.uid, email: guestUser.email }));
-  };
-
   const updateUserPoints = async (points: number, missions: MissionProgress[]) => {
     if (!user) return;
     const payload = { points, missions };
@@ -104,7 +93,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, logout, updateUserPoints, guestLogin }}>
+    <AuthContext.Provider value={{ user, loading, logout, updateUserPoints}}>
       {children}
     </AuthContext.Provider>
   );

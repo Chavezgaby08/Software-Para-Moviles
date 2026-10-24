@@ -1,5 +1,5 @@
 import { initializeApp, getApps } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, initializeFirestore } from "firebase/firestore";
 import {
   initializeAuth,
   getAuth,
@@ -57,7 +57,17 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-export const db = getFirestore(app);
+
+// En iOS WKWebView (capacitor://localhost), Firestore long-polling evita errores de CORS en el canal Listen
+let dbInstance;
+try {
+  dbInstance = initializeFirestore(app, {
+    experimentalAutoDetectLongPolling: true
+  });
+} catch {
+  dbInstance = getFirestore(app);
+}
+export const db = dbInstance;
 
 // Inicializar Auth con persistencia local explícita sin el popupRedirectResolver (que carga apis.google.com/gapi.iframes)
 let authInstance: Auth;
