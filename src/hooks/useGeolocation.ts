@@ -11,6 +11,7 @@ export const useGeolocation = () => {
   const [position, setPosition] = useState<LocationCoords | null>(null);
   const activeWatchIdRef = useRef<CallbackID | null>(null);
   const webWatchIdRef = useRef<number | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const requestGeolocationPermission = async (): Promise<boolean> => {
     try {
@@ -22,7 +23,7 @@ export const useGeolocation = () => {
       return true;
     } catch (e) {
       console.warn("Permisos Capacitor Geolocation:", e);
-      return true; // Continuar, el navegador o plugin pueden manejarlo
+      return true;
     }
   };
 
@@ -38,12 +39,12 @@ export const useGeolocation = () => {
   const getCurrentPosition = async (): Promise<LocationCoords> => {
     await requestGeolocationPermission();
 
-    // 1. Capacitor Geolocation nativo con alta precisión
+    // 1. Capacitor Geolocation nativo con máxima precisión y SIN caché (maximumAge: 0)
     try {
       const pos = await Geolocation.getCurrentPosition({
         enableHighAccuracy: true,
-        timeout: 7000,
-        maximumAge: 5000
+        timeout: 8000,
+        maximumAge: 0 // Obliga a iOS a no entregar ubicación cacheada
       });
       const sanitized = sanitizeCoords(pos?.coords);
       if (sanitized) {
@@ -54,12 +55,12 @@ export const useGeolocation = () => {
       console.warn("GPS alta precisión advertencia:", highErr);
     }
 
-    // 2. Capacitor Geolocation con precisión estándar
+    // 2. Capacitor Geolocation con opciones estándar
     try {
       const posLow = await Geolocation.getCurrentPosition({
         enableHighAccuracy: false,
-        timeout: 5000,
-        maximumAge: 15000
+        timeout: 6000,
+        maximumAge: 0
       });
       const sanitized = sanitizeCoords(posLow?.coords);
       if (sanitized) {
@@ -70,7 +71,7 @@ export const useGeolocation = () => {
       console.warn("GPS estándar advertencia:", lowErr);
     }
 
-    // 3. Fallback al navigator del WebView/Safari
+    // 3. Fallback al navigator del WebView/Safari (iOS Safari / Web)
     if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
       try {
         const webCoords = await new Promise<LocationCoords>((resolve, reject) => {
@@ -81,7 +82,7 @@ export const useGeolocation = () => {
               else reject(new Error("Coordenadas no válidas"));
             },
             (err) => reject(err),
-            { timeout: 5000, maximumAge: 10000, enableHighAccuracy: true }
+            { timeout: 6000, maximumAge: 0, enableHighAccuracy: true }
           );
         });
         setPosition(webCoords);
@@ -91,7 +92,7 @@ export const useGeolocation = () => {
       }
     }
 
-    // 4. Contingencia segura para nunca congelar la app
+    // 4. Contingencia si no hay señal
     const fallback = position || { latitude: 3.3633, longitude: -76.5122, accuracy: 15 };
     return fallback;
   };
@@ -101,13 +102,13 @@ export const useGeolocation = () => {
   ): Promise<() => Promise<void>> => {
     await requestGeolocationPermission();
 
-    // Intentar iniciar Capacitor watchPosition
+    // 1. Iniciar listener reactivo nativo de Capacitor con maximumAge: 0
     try {
       const watchId = await Geolocation.watchPosition(
         {
           enableHighAccuracy: true,
           timeout: 10000,
-          maximumAge: 2000
+          maximumAge: 0
         },
         (pos: Position | null, err: unknown) => {
           if (err) {
@@ -123,7 +124,7 @@ export const useGeolocation = () => {
       );
       activeWatchIdRef.current = watchId;
     } catch (e) {
-      console.warn("Capacitor watchPosition falló, iniciando web watchPosition:", e);
+      console.warn("Capacitor watchPosition falló:", e);
       if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
         try {
           webWatchIdRef.current = navigator.geolocation.watchPosition(
@@ -135,7 +136,7 @@ export const useGeolocation = () => {
               }
             },
             (err) => console.warn("Navigator watchPosition:", err),
-            { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
+            { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
           );
         } catch (wErr) {
           console.warn("Navigator watchPosition no disponible:", wErr);
@@ -143,8 +144,34 @@ export const useGeolocation = () => {
       }
     }
 
+    // 2. POLLING ACTIVO (cada 2 segundos) para forzar a iOS CoreLocation a leer el GPS
+    // Esto resuelve el problema de que iOS retiene la misma coordenada o no dispara el evento watchPosition si la distancia es pequeña
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+    }
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const freshPos = await Geolocation.getCurrentPosition({
+          enableHighAccuracy: true,
+          timeout: 4000,
+          maximumAge: 0
+        });
+        const sanitized = sanitizeCoords(freshPos?.coords);
+        if (sanitized) {
+          setPosition(sanitized);
+          onLocationUpdate(sanitized);
+        }
+      } catch {
+        // En caso de timeout transitorio del hardware, ignorar este ciclo
+      }
+    }, 2000);
+
     // Función de limpieza para detener el rastreo de ubicación
     return async () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
       if (activeWatchIdRef.current) {
         try {
           await Geolocation.clearWatch({ id: activeWatchIdRef.current });

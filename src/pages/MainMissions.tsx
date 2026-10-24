@@ -1,5 +1,36 @@
-import React, { useState, useEffect, useContext, useRef } from 'react';
-import { IonPage, IonHeader, IonToolbar, IonTitle, IonContent, IonProgressBar, IonList, IonButton, IonText, IonLoading, IonButtons, IonCard, IonCardContent } from '@ionic/react';
+import React, { useState, useEffect, useContext, useRef, useCallback } from 'react';
+import {
+  IonPage,
+  IonHeader,
+  IonToolbar,
+  IonTitle,
+  IonContent,
+  IonProgressBar,
+  IonList,
+  IonButton,
+  IonText,
+  IonLoading,
+  IonButtons,
+  IonCard,
+  IonCardContent,
+  IonCardHeader,
+  IonCardTitle,
+  IonBadge,
+  IonIcon,
+  IonAlert
+} from '@ionic/react';
+import {
+  cameraOutline,
+  navigateOutline,
+  timerOutline,
+  trophyOutline,
+  logOutOutline,
+  refreshOutline,
+  checkmarkCircle,
+  walkOutline,
+  flashOutline,
+  closeCircleOutline
+} from 'ionicons/icons';
 import { AuthContext } from '../context/AuthContext';
 import { MissionItem } from '../components/MissionItem';
 import { Mission } from '../types';
@@ -12,29 +43,50 @@ import { useNavigate } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 
-interface Mission2TrackingState {
-  initialCoords: LocationCoords | null;
-  currentCoords: LocationCoords | null;
-  distance: number;
-  readingsCount: number;
-  statusText: string;
-  isFixing: boolean;
-}
+const INITIAL_MISSIONS: Mission[] = [
+  {
+    id: 1,
+    title: 'Misión 1: Evidencia',
+    description: 'Toma una foto con la cámara y guárdala como evidencia.',
+    points: 40,
+    completed: false,
+    unlocked: true
+  },
+  {
+    id: 2,
+    title: 'Misión 2: Movimiento real',
+    description: 'Desplázate más de 30 metros de tu posición original con GPS.',
+    points: 40,
+    completed: false,
+    unlocked: false
+  },
+  {
+    id: 3,
+    title: 'Misión 3: Permanencia activa',
+    description: 'Permanece quieto 10 segundos continuos (el celular vibrará al finalizar).',
+    points: 40,
+    completed: false,
+    unlocked: false
+  }
+];
 
-// Función para calcular el estado de desbloqueo según la secuencia de misiones
+// Calcula dinámicamente el desbloqueo secuencial de misiones
 const computeUnlockedMissions = (missionsList: Mission[]): Mission[] => {
-  const m1Done = !!missionsList.find(m => m.id === 1)?.completed;
-  const m2Done = !!missionsList.find(m => m.id === 2)?.completed;
+  const m1Done = !!missionsList.find((m) => m.id === 1)?.completed;
+  const m2Done = !!missionsList.find((m) => m.id === 2)?.completed;
+  const m3Done = !!missionsList.find((m) => m.id === 3)?.completed;
 
-  return missionsList.map(m => {
+  return missionsList.map((m) => {
     if (m.id === 1) {
       return { ...m, unlocked: true };
     }
     if (m.id === 2) {
-      return { ...m, unlocked: m1Done };
+      // Se desbloquea si la 1 ya fue completada, o si la 2 ya estaba completada
+      return { ...m, unlocked: m1Done || m2Done || m3Done };
     }
     if (m.id === 3) {
-      return { ...m, unlocked: m2Done };
+      // Se desbloquea si la 2 ya fue completada, o si la 3 ya estaba completada
+      return { ...m, unlocked: m2Done || m3Done };
     }
     return m;
   });
@@ -44,294 +96,343 @@ export const MainMissions: React.FC = () => {
   const { user, logout, updateUserPoints } = useContext(AuthContext);
   const navigate = useNavigate();
 
-  const [photo, setPhoto] = useState<string | null>(() => {
-    return localStorage.getItem('mission_photo') || null;
-  });
-  const { takePhoto } = useCamera();
+  const { photo, takePhoto } = useCamera();
   const { getCurrentPosition, startWatchingPosition, calculateDistance } = useGeolocation();
   const { vibrate } = useHaptics();
   const { requestPermission, sendNotification } = useLocalNotifications();
-  const { isMoving, startTracking, stopTracking } = useAccelerometer();
+  const { isMoving, isMovingRef, startTracking, stopTracking } = useAccelerometer();
 
   const [points, setPoints] = useState<number>(0);
+  const [missions, setMissions] = useState<Mission[]>(INITIAL_MISSIONS);
   const [loadingText, setLoadingText] = useState<string | null>(null);
+  const [showResetAlert, setShowResetAlert] = useState<boolean>(false);
 
-  const [mission2Tracking, setMission2Tracking] = useState<Mission2TrackingState | null>(null);
-  const [mission3Tracking, setMission3Tracking] = useState<{ remaining: number; movingDetected: boolean } | null>(null);
+  // Estado para el rastreo de Misión 2 (GPS)
+  const [mission2Active, setMission2Active] = useState<boolean>(false);
+  const [m2Origin, setM2Origin] = useState<LocationCoords | null>(null);
+  const [m2Current, setM2Current] = useState<LocationCoords | null>(null);
+  const [m2Distance, setM2Distance] = useState<number>(0);
+  const [m2ReadingsCount, setM2ReadingsCount] = useState<number>(0);
+  const stopM2WatchRef = useRef<(() => Promise<void>) | null>(null);
 
-  const mission2WatchCleanupRef = useRef<(() => Promise<void>) | null>(null);
-  const mission2IntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const mission3TimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Estado para el rastreo de Misión 3 (Permanencia/Acelerómetro)
+  const [mission3Active, setMission3Active] = useState<boolean>(false);
+  const [m3Remaining, setM3Remaining] = useState<number>(10);
+  const [m3MovedWarning, setM3MovedWarning] = useState<boolean>(false);
+  const m3TimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const m3QuietSecondsRef = useRef(0);
+  const m3CompletingRef = useRef(false);
+  const completeMission3Ref = useRef<() => Promise<void>>(async () => {});
 
-  const [missions, setMissions] = useState<Mission[]>([
-    { id: 1, title: 'Misión 1: Evidencia', description: 'Toma una foto con la cámara (se completa al guardar imagen)', points: 40, completed: false, unlocked: true },
-    { id: 2, title: 'Misión 2: Movimiento real', description: 'Muévete al menos 30 a 50 metros de tu posición original', points: 40, completed: false, unlocked: false },
-    { id: 3, title: 'Misión 3: Permanencia activa', description: 'Mantente quieto durante 10 segundos continuos (el celular vibrará al finalizar)', points: 40, completed: false, unlocked: false }
-  ]);
-
-  const applyLoadedProgress = (
-    savedPoints: number,
-    savedMissions: Array<{ id: number; completed: boolean; unlocked?: boolean }>
-  ) => {
-    setPoints(savedPoints);
-    setMissions(prev => {
-      const merged = prev.map(m => {
-        const found = savedMissions.find(sm => sm.id === m.id);
-        return found ? { ...m, completed: found.completed } : m;
-      });
-      return computeUnlockedMissions(merged);
-    });
-  };
-
+  // Cargar progreso al iniciar (primero de LocalStorage y luego sincroniza de Firestore)
   useEffect(() => {
     requestPermission();
 
-    // 1. Cargar datos locales inmediatamente para que nunca se pierda el estado
+    // 1. Restaurar progreso local inmediatamente
     const saved = localStorage.getItem('app_progress');
+    let loadedPoints = 0;
+    let baseMissions = INITIAL_MISSIONS;
+
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (typeof parsed.points === 'number' && Array.isArray(parsed.missions)) {
-          applyLoadedProgress(parsed.points, parsed.missions);
+        if (typeof parsed.points === 'number') {
+          loadedPoints = parsed.points;
+        }
+        if (Array.isArray(parsed.missions)) {
+          baseMissions = INITIAL_MISSIONS.map((im) => {
+            const found = parsed.missions.find((sm: { id: number; completed: boolean }) => sm.id === im.id);
+            return found ? { ...im, completed: !!found.completed } : im;
+          });
         }
       } catch (e) {
-        console.warn("Error cargando app_progress local:", e);
+        console.warn('Error leyendo progreso local:', e);
       }
     }
 
-    // 2. Sincronizar desde Firebase Firestore
-    const syncFromFirestore = async () => {
-      if (!user?.uid) return;
-      try {
-        const userDocRef = doc(db, 'users', user.uid);
-        const docSnap = await getDoc(userDocRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          if (typeof data.points === 'number' && Array.isArray(data.missions)) {
-            applyLoadedProgress(data.points, data.missions);
-            localStorage.setItem('app_progress', JSON.stringify({
-              points: data.points,
-              missions: data.missions
-            }));
+    const computed = computeUnlockedMissions(baseMissions);
+    setPoints(loadedPoints);
+    setMissions(computed);
+
+    // 2. Si hay usuario autenticado en Firestore, consultar progreso remoto
+    if (user?.uid && !user.uid.startsWith('invitado_')) {
+      const syncRemote = async () => {
+        try {
+          const docRef = doc(db, 'users', user.uid);
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (typeof data.points === 'number' && Array.isArray(data.missions)) {
+              const remoteMissions = INITIAL_MISSIONS.map((im) => {
+                const found = data.missions.find((rm: { id: number; completed: boolean }) => rm.id === im.id);
+                return found ? { ...im, completed: !!found.completed } : im;
+              });
+              const finalMissions = computeUnlockedMissions(remoteMissions);
+              setPoints(data.points);
+              setMissions(finalMissions);
+              localStorage.setItem(
+                'app_progress',
+                JSON.stringify({
+                  points: data.points,
+                  missions: finalMissions.map((m) => ({ id: m.id, completed: m.completed }))
+                })
+              );
+            }
           }
-        }
-      } catch (e) {
-        console.warn("Sincronización Firestore en inicio:", e);
-      }
-    };
-
-    syncFromFirestore();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.uid]);
-
-  const completeMission = (id: number) => {
-    let updatedPoints = points;
-    const mapped = missions.map(m => {
-      if (m.id === id && !m.completed) {
-        m.completed = true;
-        updatedPoints += m.points;
-      }
-      return m;
-    });
-
-    // Desbloquear automáticamente la siguiente misión en secuencia
-    const updatedMissions = computeUnlockedMissions(mapped);
-
-    setMissions(updatedMissions);
-    setPoints(updatedPoints);
-
-    // Guardar en Firebase y LocalStorage
-    const jsonMissions = updatedMissions.map(m => ({
-      id: m.id,
-      completed: m.completed,
-      unlocked: m.unlocked
-    }));
-    updateUserPoints(updatedPoints, jsonMissions);
-
-    // Notificaciones locales requeridas
-    const completedCount = updatedMissions.filter(m => m.completed).length;
-    sendNotification("¡Misión Completada!", "Has completado una misión.");
-
-    if (completedCount === updatedMissions.length - 1) {
-      sendNotification("¡Casi lo logras!", "Te falta 1 misión para completar.");
-    }
-  };
-
-  // Misión 1: Cámara
-  const handleMission1 = async () => {
-    setLoadingText("Abriendo cámara para captura de evidencia...");
-    try {
-      const capturedPhoto = await takePhoto();
-      setLoadingText(null);
-      if (capturedPhoto) {
-        setPhoto(capturedPhoto);
-        localStorage.setItem('mission_photo', capturedPhoto);
-        completeMission(1);
-      }
-    } catch (e) {
-      console.warn("Error capturando foto:", e);
-      setLoadingText(null);
-    }
-  };
-
-  // Misión 2: Geolocalización (>30m) - Modo en vivo interactivo con watchPosition y botones de prueba
-  const handleMission2 = async () => {
-    // 1. Mostrar de inmediato la tarjeta de seguimiento para feedback instantáneo
-    setMission2Tracking({
-      initialCoords: null,
-      currentCoords: null,
-      distance: 0,
-      readingsCount: 0,
-      statusText: "Conectando al GPS del iPhone y fijando punto de partida...",
-      isFixing: true
-    });
-
-    try {
-      // 2. Obtener punto inicial real
-      const startFix = await getCurrentPosition();
-      const initialPoint: LocationCoords = startFix;
-      let highestDistance = 0;
-      let readings = 1;
-
-      setMission2Tracking({
-        initialCoords: startFix,
-        currentCoords: startFix,
-        distance: 0,
-        readingsCount: readings,
-        statusText: "Punto inicial fijado. GPS en transmisión en vivo. Camina alejándote...",
-        isFixing: false
-      });
-
-      // Función para procesar una nueva coordenada recibida del sensor
-      const handleNewCoords = (newCoords: LocationCoords) => {
-        readings++;
-        const calculated = calculateDistance(
-          initialPoint.latitude,
-          initialPoint.longitude,
-          newCoords.latitude,
-          newCoords.longitude
-        );
-
-        const currentDist = Math.round(calculated);
-        if (currentDist > highestDistance) {
-          highestDistance = currentDist;
-        }
-
-        setMission2Tracking(prev => {
-          if (!prev) return null;
-          const distToUse = Math.max(prev.distance, highestDistance);
-          return {
-            ...prev,
-            currentCoords: newCoords,
-            distance: distToUse,
-            readingsCount: readings,
-            statusText: `GPS activo (#${readings}) - Precisión: ±${newCoords.accuracy || 8}m. Camina alejándote...`,
-            isFixing: false
-          };
-        });
-
-        // Verificar condición de cumplimiento: distancia >= 30m
-        if (highestDistance >= 30) {
-          cleanupMission2();
-          completeMission(2);
+        } catch (err) {
+          console.warn('Firestore sinc advertencia:', err);
         }
       };
+      syncRemote();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
-      // 3. Iniciar watchPosition nativo de Capacitor
-      const cleanupWatch = await startWatchingPosition(handleNewCoords);
-      mission2WatchCleanupRef.current = cleanupWatch;
+  // Guardar progreso y notificar
+  const saveProgress = useCallback(
+    async (updatedMissions: Mission[], additionalPoints: number) => {
+      const newPoints = points + additionalPoints;
+      const finalMissions = computeUnlockedMissions(updatedMissions);
 
-      // 4. Polling periódico de seguridad cada 2.5s por si el dispositivo no emite eventos automáticos
-      const interval = setInterval(async () => {
-        try {
-          const freshCoords = await getCurrentPosition();
-          handleNewCoords(freshCoords);
-        } catch (e) {
-          console.warn("Aviso en intervalo de GPS:", e);
+      setPoints(newPoints);
+      setMissions(finalMissions);
+
+      const minimalMissions = finalMissions.map((m) => ({
+        id: m.id,
+        completed: m.completed
+      }));
+
+      // Guardado local y remoto
+      await updateUserPoints(newPoints, minimalMissions);
+    },
+    [points, updateUserPoints]
+  );
+
+  // Detener rastreo M2
+  const stopM2 = useCallback(async () => {
+    if (stopM2WatchRef.current) {
+      await stopM2WatchRef.current();
+      stopM2WatchRef.current = null;
+    }
+    setMission2Active(false);
+  }, []);
+
+  // Limpieza al desmontar
+  useEffect(() => {
+    return () => {
+      if (stopM2WatchRef.current) {
+        stopM2WatchRef.current();
+      }
+      if (m3TimerRef.current) {
+        clearInterval(m3TimerRef.current);
+      }
+      stopTracking();
+    };
+  }, [stopTracking]);
+
+  // Completar Misión 1 (Foto)
+  const handleMission1 = async () => {
+    setLoadingText('Abriendo cámara...');
+    try {
+      const photoUrl = await takePhoto();
+      if (photoUrl) {
+        setLoadingText('Guardando evidencia...');
+        localStorage.setItem('mission_photo', photoUrl);
+
+        const updated = missions.map((m) => (m.id === 1 ? { ...m, completed: true } : m));
+        await saveProgress(updated, 40);
+
+        await vibrate(500);
+        await sendNotification('¡Misión 1 Completada!', 'Has guardado tu evidencia. Te faltan 2 misiones para completar.');
+      }
+    } catch (err) {
+      console.warn('Error en Misión 1:', err);
+    } finally {
+      setLoadingText(null);
+    }
+  };
+
+  // Completar exitosamente la Misión 2
+  const completeMission2 = useCallback(
+    async (finalDistance: number) => {
+      await stopM2();
+      await vibrate(1000);
+
+      const updated = missions.map((m) => (m.id === 2 ? { ...m, completed: true } : m));
+      await saveProgress(updated, 40);
+
+      await sendNotification(
+        '¡Has completado una misión!',
+        `¡Recorriste ${Math.round(finalDistance)} metros! Te falta 1 misión para completar.`
+      );
+    },
+    [missions, saveProgress, stopM2, vibrate, sendNotification]
+  );
+
+  // Iniciar Misión 2 (GPS)
+  const handleMission2 = async () => {
+    setLoadingText('Calibrando GPS en tiempo real...');
+    try {
+      const startPos = await getCurrentPosition();
+      setM2Origin(startPos);
+      setM2Current(startPos);
+      setM2Distance(0);
+      setM2ReadingsCount(1);
+      setMission2Active(true);
+      setLoadingText(null);
+
+      // Iniciar el observador con maximumAge: 0 y polling activo
+      const cleanup = await startWatchingPosition((freshCoords) => {
+        setM2ReadingsCount((prev) => prev + 1);
+        setM2Current(freshCoords);
+
+        if (startPos) {
+          const dist = calculateDistance(
+            startPos.latitude,
+            startPos.longitude,
+            freshCoords.latitude,
+            freshCoords.longitude
+          );
+          setM2Distance(dist);
+
+          // Si supera los 30 metros requeridos, completar automáticamente
+          if (dist >= 30) {
+            completeMission2(dist);
+          }
         }
-      }, 2500);
-      mission2IntervalRef.current = interval;
+      });
 
-    } catch (e) {
-      console.warn("Error al inicializar GPS:", e);
-      setMission2Tracking(prev => prev ? {
-        ...prev,
-        isFixing: false,
-        statusText: "GPS no disponible temporalmente. Puedes usar los botones de paso para probar."
-      } : null);
+      stopM2WatchRef.current = cleanup;
+    } catch (err) {
+      console.warn('Error iniciando Misión 2:', err);
+      setLoadingText(null);
     }
   };
 
-  const cleanupMission2 = () => {
-    if (mission2IntervalRef.current) {
-      clearInterval(mission2IntervalRef.current);
-      mission2IntervalRef.current = null;
+  // Simulación paso a paso de M2 (para pruebas en interiores / escritorio)
+  const handleSimulateStepM2 = () => {
+    const nextDist = m2Distance + 10;
+    setM2Distance(nextDist);
+    setM2ReadingsCount((prev) => prev + 1);
+    if (nextDist >= 30) {
+      completeMission2(nextDist);
     }
-    if (mission2WatchCleanupRef.current) {
-      mission2WatchCleanupRef.current();
-      mission2WatchCleanupRef.current = null;
-    }
-    setMission2Tracking(null);
   };
 
-  // Misión 3: Permanencia (10 segundos quieto con Acelerómetro)
+  // Completar Misión 2 directamente (acceso rápido de validación)
+  const handleForceCompleteM2 = () => {
+    completeMission2(35);
+  };
+
+  // Completar Misión 3 exitosamente
+  const completeMission3 = useCallback(async () => {
+    if (m3CompletingRef.current) return;
+    m3CompletingRef.current = true;
+    if (m3TimerRef.current) {
+      clearInterval(m3TimerRef.current);
+      m3TimerRef.current = null;
+    }
+    await stopTracking();
+    setMission3Active(false);
+
+    // Requisito técnico: Pasados los 10 segundos el celular vibra
+    await vibrate(1500);
+
+    const updated = missions.map((m) => (m.id === 3 ? { ...m, completed: true } : m));
+    await saveProgress(updated, 40);
+
+    await sendNotification(
+      '¡Has completado una misión!',
+      '¡Increíble! Superaste la Misión 3 y finalizaste todas las misiones.'
+    );
+  }, [missions, saveProgress, stopTracking, vibrate, sendNotification]);
+
+  completeMission3Ref.current = completeMission3;
+
+  // Iniciar Misión 3 (Acelerómetro / 10s quieto)
   const handleMission3 = async () => {
-    setMission3Tracking({ remaining: 10, movingDetected: false });
+    if (mission3Active) return;
+    setMission3Active(true);
+    setM3Remaining(10);
+    setM3MovedWarning(false);
+
     try {
       await startTracking();
-    } catch (e) {
-      console.warn("No se pudo iniciar acelerómetro:", e);
+    } catch (err) {
+      console.error('No se pudo iniciar el acelerómetro:', err);
+      setMission3Active(false);
+      return;
+    }
+  };
+
+  // El contador solo corre durante intervalos continuos sin movimiento.
+  useEffect(() => {
+    if (!mission3Active) return;
+
+    if (m3TimerRef.current) {
+      clearInterval(m3TimerRef.current);
+      m3TimerRef.current = null;
     }
 
-    let secondsStill = 0;
+    if (isMoving) {
+      setM3MovedWarning(true);
+      m3QuietSecondsRef.current = 0;
+      setM3Remaining(10);
+      return;
+    }
+
+    setM3MovedWarning(false);
+    m3QuietSecondsRef.current = 0;
     const timer = setInterval(() => {
-      if (isMoving) {
-        secondsStill = 0; // Reinicia contador si detecta movimiento
-        setMission3Tracking({ remaining: 10, movingDetected: true });
-      } else {
-        secondsStill += 1;
-        setMission3Tracking({ remaining: Math.max(0, 10 - secondsStill), movingDetected: false });
-      }
+      if (isMovingRef.current) return;
 
-      if (secondsStill >= 10) {
-        cleanupMission3();
-        vibrate(1000); // Pasados 10 segundos el celular vibra
-        completeMission(3);
-      }
+      m3QuietSecondsRef.current += 1;
+      const remaining = Math.max(0, 10 - m3QuietSecondsRef.current);
+      setM3Remaining(remaining);
+      if (remaining === 0) void completeMission3Ref.current();
     }, 1000);
+    m3TimerRef.current = timer;
 
-    mission3TimerRef.current = timer;
-  };
+    return () => {
+      clearInterval(timer);
+      if (m3TimerRef.current === timer) m3TimerRef.current = null;
+    };
+  }, [mission3Active, isMoving, isMovingRef]);
 
-  const cleanupMission3 = () => {
-    if (mission3TimerRef.current) {
-      clearInterval(mission3TimerRef.current);
-      mission3TimerRef.current = null;
+  // Cancelar Misión 3
+  const cancelMission3 = async () => {
+    m3CompletingRef.current = false;
+    if (m3TimerRef.current) {
+      clearInterval(m3TimerRef.current);
+      m3TimerRef.current = null;
     }
-    stopTracking();
-    setMission3Tracking(null);
+    m3QuietSecondsRef.current = 0;
+    await stopTracking();
+    setMission3Active(false);
+    setM3Remaining(10);
   };
 
-  const simulateStepMission3 = () => {
-    cleanupMission3();
-    vibrate(1000);
-    completeMission(3);
-  };
-
-  const cancelActiveMissions = () => {
-    cleanupMission2();
-    cleanupMission3();
-    setLoadingText(null);
-  };
-
-  const executeMission = (mission: Mission) => {
+  // Ejecución según la misión seleccionada
+  const handleExecuteMission = (mission: Mission) => {
     if (mission.id === 1) handleMission1();
     if (mission.id === 2) handleMission2();
     if (mission.id === 3) handleMission3();
   };
 
-  const completedMissionsCount = missions.filter(m => m.completed).length;
-  const progressPercent = missions.length > 0 ? completedMissionsCount / missions.length : 0;
+  // Reiniciar misiones (para demostración o volver a empezar sin desloguearse)
+  const handleResetMissions = async () => {
+    await stopM2();
+    await cancelMission3();
+    const fresh = INITIAL_MISSIONS.map((m) => ({ ...m, completed: false, unlocked: m.id === 1 }));
+    setPoints(0);
+    setMissions(fresh);
+    localStorage.removeItem('mission_photo');
+    await updateUserPoints(0, fresh.map((m) => ({ id: m.id, completed: false })));
+  };
+
+  const completedCount = missions.filter((m) => m.completed).length;
+  const progressRatio = completedCount / missions.length;
+  const allCompleted = completedCount === missions.length;
 
   return (
     <IonPage>
@@ -339,88 +440,71 @@ export const MainMissions: React.FC = () => {
         <IonToolbar color="primary">
           <IonTitle>Panel de Misiones</IonTitle>
           <IonButtons slot="end">
-            <IonButton onClick={logout}>Salir</IonButton>
+            <IonButton title="Reiniciar" onClick={() => setShowResetAlert(true)}>
+              <IonIcon slot="icon-only" icon={refreshOutline} />
+            </IonButton>
+            <IonButton title="Cerrar sesión" onClick={logout}>
+              <IonIcon slot="icon-only" icon={logOutOutline} />
+            </IonButton>
           </IonButtons>
         </IonToolbar>
       </IonHeader>
+
       <IonContent className="ion-padding">
-        <IonLoading
-          isOpen={!!loadingText}
-          message={loadingText || ''}
-          backdropDismiss={true}
-        />
-
-        {user?.email && (
-          <div style={{ marginBottom: '8px' }}>
-            <IonText color="medium">
-              <small>Usuario activo: <strong>{user.email}</strong></small>
-            </IonText>
-          </div>
-        )}
-
-        <div className="ion-margin-bottom">
-          <h3>Puntos Totales: <strong>{points}</strong></h3>
+        {/* Encabezado de Usuario y Puntaje */}
+        <div style={{ marginBottom: '16px' }}>
           <IonText color="dark">
-            <p>Progreso General: {completedMissionsCount} de {missions.length} misiones completadas</p>
+            <h2 style={{ margin: '0 0 4px 0', fontWeight: 'bold' }}>
+              Hola, {user?.displayName || user?.email?.split('@')[0] || 'Explorador'}
+            </h2>
           </IonText>
-          <IonProgressBar value={progressPercent} color="success" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+            <IonBadge color="warning" style={{ fontSize: '1rem', padding: '6px 12px' }}>
+              {points} Puntos Totales
+            </IonBadge>
+            <IonBadge color={allCompleted ? 'success' : 'tertiary'} style={{ fontSize: '0.9rem', padding: '6px 10px' }}>
+              {completedCount} de {missions.length} completadas ({Math.round(progressRatio * 100)}%)
+            </IonBadge>
+          </div>
         </div>
 
-        {/* Tarjeta interactiva en vivo para Misión 2 */}
-        {mission2Tracking && (
-          <IonCard style={{ margin: '0 0 16px 0', border: '2px solid #0284c7', borderRadius: '12px', background: '#f0f9ff' }}>
+        {/* Barra de Progreso General */}
+        <div style={{ marginBottom: '20px' }}>
+          <IonProgressBar value={progressRatio} color={allCompleted ? 'success' : 'primary'} />
+        </div>
+
+        {/* Panel Interactivo de Misión 2 Activa (GPS en Vivo) */}
+        {mission2Active && (
+          <IonCard color="light" style={{ border: '2px solid #3880ff', marginBottom: '20px' }}>
+            <IonCardHeader>
+              <IonCardTitle style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <IonIcon icon={navigateOutline} color="primary" />
+                Rastreo GPS en Tiempo Real
+              </IonCardTitle>
+            </IonCardHeader>
             <IonCardContent>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                <h3 style={{ margin: 0, color: '#0369a1', fontWeight: 700, fontSize: '1.05rem' }}>
-                  🚶 Misión 2 en Curso: Movimiento Real
-                </h3>
-                <span style={{ fontSize: '0.75rem', background: '#0284c7', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>
-                  GPS EN VIVO
-                </span>
-              </div>
-
-              <div style={{ marginBottom: '10px' }}>
-                <p style={{ margin: '0 0 4px 0', fontSize: '1rem', color: '#0c4a6e' }}>
-                  Distancia recorrida: <strong style={{ fontSize: '1.25rem', color: '#0369a1' }}>{mission2Tracking.distance}m</strong> / 30m requeridos
-                </p>
-                <IonProgressBar
-                  value={Math.min(1, mission2Tracking.distance / 30)}
-                  color={mission2Tracking.distance >= 30 ? "success" : "primary"}
-                  style={{ height: '10px', borderRadius: '5px' }}
-                />
-              </div>
-
-              {/* Detalle técnico visible de GPS para el usuario */}
-              <div style={{ background: '#e0f2fe', padding: '8px 10px', borderRadius: '8px', fontSize: '0.78rem', color: '#0369a1', marginBottom: '12px', lineHeight: 1.4 }}>
-                <div><strong>📍 Punto Inicio:</strong> {mission2Tracking.initialCoords ? `${mission2Tracking.initialCoords.latitude.toFixed(6)}, ${mission2Tracking.initialCoords.longitude.toFixed(6)}` : 'Obteniendo fix inicial...'}</div>
-                <div><strong>📍 Posición Actual:</strong> {mission2Tracking.currentCoords ? `${mission2Tracking.currentCoords.latitude.toFixed(6)}, ${mission2Tracking.currentCoords.longitude.toFixed(6)}` : 'Buscando satélites...'}</div>
-                <div style={{ marginTop: '2px', color: '#0284c7' }}>📡 {mission2Tracking.statusText}</div>
-              </div>
-
-            </IonCardContent>
-          </IonCard>
-        )}
-
-        {/* Tarjeta interactiva en vivo para Misión 3 */}
-        {mission3Tracking && (
-          <IonCard style={{ margin: '0 0 16px 0', border: '2px solid #eab308', borderRadius: '12px', background: '#fefce8' }}>
-            <IonCardContent>
-              <h3 style={{ margin: '0 0 8px 0', color: '#854d0e', fontWeight: 700 }}>
-                Misión 3 en Curso: Permanencia Activa
-              </h3>
-              <p style={{ margin: '0 0 6px 0', fontSize: '1.15rem', color: '#713f12', fontWeight: 600 }}>
-                Tiempo inmóvil restante: <strong>{mission3Tracking.remaining}s</strong>
+              <p style={{ margin: '4px 0' }}>
+                <strong>Distancia recorrida:</strong>{' '}
+                <span style={{ fontSize: '1.3rem', color: m2Distance >= 30 ? '#2dd36f' : '#3880ff', fontWeight: 'bold' }}>
+                  {m2Distance.toFixed(1)} m
+                </span>{' '}
+                / 30 m requeridos
               </p>
-              <p style={{ margin: '0 0 12px 0', fontSize: '0.85rem', color: mission3Tracking.movingDetected ? '#dc2626' : '#16a34a', fontWeight: 600 }}>
-                {mission3Tracking.movingDetected
-                  ? '⚠️ ¡Movimiento detectado! Reiniciando contador a 10s...'
-                  : '✅ Inmóvil detectado. Mantén la calma sin mover el celular...'}
-              </p>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <IonButton size="small" color="success" onClick={simulateStepMission3}>
-                  Completar / Simular 10s
-                </IonButton>
-                <IonButton size="small" fill="outline" color="danger" onClick={cancelActiveMissions}>
+              <IonProgressBar
+                value={Math.min(m2Distance / 30, 1)}
+                color={m2Distance >= 30 ? 'success' : 'primary'}
+                style={{ height: '8px', borderRadius: '4px', margin: '8px 0' }}
+              />
+
+              <div style={{ fontSize: '0.82rem', color: '#666', background: '#fff', padding: '8px', borderRadius: '6px', margin: '8px 0' }}>
+                <div>📍 <strong>Origen:</strong> {m2Origin ? `${m2Origin.latitude.toFixed(5)}, ${m2Origin.longitude.toFixed(5)}` : 'Obteniendo...'}</div>
+                <div>📡 <strong>Actual:</strong> {m2Current ? `${m2Current.latitude.toFixed(5)}, ${m2Current.longitude.toFixed(5)}` : 'Leyendo...'}</div>
+                <div>🎯 <strong>Precisión:</strong> ±{m2Current?.accuracy ?? 8} m | 🔄 <strong>Lecturas:</strong> {m2ReadingsCount}</div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <IonButton size="small" fill="outline" color="danger" onClick={stopM2}>
+                  <IonIcon slot="start" icon={closeCircleOutline} />
                   Cancelar
                 </IonButton>
               </div>
@@ -428,39 +512,115 @@ export const MainMissions: React.FC = () => {
           </IonCard>
         )}
 
-        {photo && (
-          <div style={{ background: '#f8fafc', padding: '10px', borderRadius: '8px', marginBottom: '12px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
-            <p style={{ margin: '0 0 6px 0', fontSize: '0.85rem', color: '#475569', fontWeight: 600 }}>
-              📸 Evidencia de Foto (Misión 1):
-            </p>
-            <img
-              src={photo}
-              alt="Evidencia fotográfica"
-              style={{ maxHeight: '140px', maxWidth: '100%', borderRadius: '6px', objectFit: 'contain' }}
-            />
-          </div>
+        {/* Panel Interactivo de Misión 3 Activa (Acelerómetro en Vivo) */}
+        {mission3Active && (
+          <IonCard color="light" style={{ border: '2px solid #2dd36f', marginBottom: '20px' }}>
+            <IonCardHeader>
+              <IonCardTitle style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <IonIcon icon={timerOutline} color="success" />
+                Misión 3: Mantente Quieto
+              </IonCardTitle>
+            </IonCardHeader>
+            <IonCardContent>
+              <div style={{ textAlign: 'center', margin: '12px 0' }}>
+                <div style={{ fontSize: '3rem', fontWeight: 'bold', color: m3MovedWarning ? '#eb445a' : '#2dd36f' }}>
+                  {m3Remaining}s
+                </div>
+                <p style={{ margin: '4px 0', fontWeight: '500' }}>
+                  {m3MovedWarning ? '⚠️ ¡Movimiento detectado! Quédate quieto...' : 'Mantén el dispositivo quieto (sin bloquear)'}
+                </p>
+                <p style={{ fontSize: '0.8rem', color: '#666' }}>El celular vibrará al completar los 10 segundos.</p>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                <IonButton size="small" fill="outline" color="danger" onClick={cancelMission3}>
+                  Cancelar
+                </IonButton>
+              </div>
+            </IonCardContent>
+          </IonCard>
         )}
 
-        <IonList>
-          {missions.map(m => (
-            <MissionItem
-              key={m.id}
-              mission={m}
-              isActive={m.id === 2 ? !!mission2Tracking : m.id === 3 ? !!mission3Tracking : false}
-              onExecute={executeMission}
-            />
-          ))}
+        {/* Foto de Evidencia de Misión 1 (si fue tomada) */}
+        {photo && (
+          <IonCard style={{ marginBottom: '16px' }}>
+            <IonCardHeader>
+              <IonCardTitle style={{ fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <IonIcon icon={cameraOutline} color="success" />
+                Evidencia de Misión 1 Guardada
+              </IonCardTitle>
+            </IonCardHeader>
+            <IonCardContent style={{ textAlign: 'center' }}>
+              <img
+                src={photo}
+                alt="Evidencia Misión 1"
+                style={{ maxHeight: '180px', borderRadius: '8px', objectFit: 'cover' }}
+              />
+            </IonCardContent>
+          </IonCard>
+        )}
+
+        {/* Lista de Misiones Secuenciales */}
+        <IonText color="medium">
+          <p style={{ textTransform: 'uppercase', fontSize: '0.8rem', fontWeight: 'bold', letterSpacing: '0.5px' }}>
+            Lista de Misiones
+          </p>
+        </IonText>
+
+        <IonList inset={true} style={{ margin: '0 0 20px 0' }}>
+          {missions.map((mission) => {
+            const isThisActive =
+              (mission.id === 2 && mission2Active) ||
+              (mission.id === 3 && mission3Active);
+
+            return (
+              <MissionItem
+                key={mission.id}
+                mission={mission}
+                isActive={isThisActive}
+                onExecute={handleExecuteMission}
+              />
+            );
+          })}
         </IonList>
 
+        {/* Acceso a Pantalla de Resultados y Ranking */}
         <IonButton
           expand="block"
           color="tertiary"
-          className="ion-margin-top"
+          size="large"
+          style={{ marginTop: '16px' }}
           onClick={() => navigate('/results')}
         >
+          <IonIcon slot="start" icon={trophyOutline} />
           Ver Resultados y Ranking
         </IonButton>
+
+        {allCompleted && (
+          <div style={{ textAlign: 'center', marginTop: '16px', padding: '12px', background: '#d7f8df', borderRadius: '8px' }}>
+            <IonIcon icon={checkmarkCircle} color="success" style={{ fontSize: '2rem' }} />
+            <h3 style={{ margin: '6px 0', color: '#137333', fontWeight: 'bold' }}>¡Felicitaciones!</h3>
+            <p style={{ margin: '0', fontSize: '0.9rem', color: '#137333' }}>
+              Has completado todas las misiones y alcanzado 120 puntos.
+            </p>
+          </div>
+        )}
+
+        {/* Alerta de confirmación para reiniciar */}
+        <IonAlert
+          isOpen={showResetAlert}
+          onDidDismiss={() => setShowResetAlert(false)}
+          header="¿Reiniciar progreso?"
+          message="Se restablecerán las misiones y los puntos a 0 para que puedas volver a probarlas desde el inicio."
+          buttons={[
+            { text: 'Cancelar', role: 'cancel' },
+            { text: 'Sí, Reiniciar', handler: handleResetMissions }
+          ]}
+        />
+
+        <IonLoading isOpen={!!loadingText} message={loadingText || ''} />
       </IonContent>
     </IonPage>
   );
 };
+export default MainMissions;
